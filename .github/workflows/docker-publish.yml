@@ -2,16 +2,16 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: [ "main" ]
-    tags: [ 'v*.*.*' ]
+    branches: ["main"]
+    tags: ["v*.*.*"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   # Use docker.io for Docker Hub if empty
   REGISTRY: docker.io
   # github.repository as <account>/<repo>
-  IMAGE_NAME: enzii/deepseek-ocr-service
+  IMAGE_NAME: enzii/deepseek-ocr2-service
 
 jobs:
   build:
@@ -36,8 +36,6 @@ jobs:
           large-packages: true
           docker-images: true
           swap-storage: true
-
-
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
