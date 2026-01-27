@@ -4,17 +4,7 @@ PyMuPDF
 img2pdf
 einops
 easydict
-addict
+addict 
 Pillow
 numpy
-fastapi
-uvicorn
-python-dotenv
-# Core GPU dependencies (Install these manually or via Conda/Docker if needed)
-# torch==2.6.0
-# vllm==0.8.5
-# flash-attn==2.7.3
-matplotlib
-requests
-tqdm
-pydantic
+
