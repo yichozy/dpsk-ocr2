@@ -45,7 +45,7 @@ RUN wget https://github.com/vllm-project/vllm/releases/download/v0.8.5/vllm-0.8.
 # Copy requirements if exists (referencing remote one since local might be separate)
 # For this dockerfile we just list the deps directly or copy local requirements.txt
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt --ignore-installed dbus-python python-apt || true
+RUN pip install --no-cache-dir -r requirements.txt --ignore-installed dbus-python python-apt
 
 # Install additional packages for API
 RUN pip install --no-cache-dir fastapi uvicorn PyMuPDF img2pdf easydict addict python-dotenv

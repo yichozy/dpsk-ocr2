@@ -97,7 +97,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
 # Initialize model (loaded once at startup)
 llm = LLM(
     model=MODEL_PATH,
-    hf_overrides={"architectures": ["DeepseekOCR2ForCausalLM"]},
+    hf_overrides={"architectures": ["DeepseekOCR2ForCausalLM"], "model_type": "deepseek_v2"},
     block_size=256,
     enforce_eager=False,
     trust_remote_code=True,
