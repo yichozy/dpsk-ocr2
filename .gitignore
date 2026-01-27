@@ -141,3 +141,6 @@ dmypy.json
 *.swp
 *.swo
 *~
+miniconda3
+.agent
+data

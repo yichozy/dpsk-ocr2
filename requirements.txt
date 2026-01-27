@@ -1,0 +1,16 @@
+transformers==4.46.3
+tokenizers==0.20.3
+PyMuPDF
+img2pdf
+einops
+easydict
+addict
+Pillow
+numpy
+fastapi
+uvicorn
+python-dotenv
+# Core GPU dependencies (Install these manually or via Conda/Docker if needed)
+# torch==2.6.0
+# vllm==0.8.5
+# flash-attn==2.7.3

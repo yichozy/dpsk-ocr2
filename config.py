@@ -1,10 +1,11 @@
+import os
 
 BASE_SIZE = 1024
 IMAGE_SIZE = 768
 CROP_MODE = True
 MIN_CROPS= 2
 MAX_CROPS= 6 # max:6
-MAX_CONCURRENCY = 100 # If you have limited GPU memory, lower the concurrency count.
+MAX_CONCURRENCY = int(os.getenv("MAX_CONCURRENCY", 20)) # If you have limited GPU memory, lower the concurrency count.
 NUM_WORKERS = 64 # image pre-process (resize/padding) workers 
 PRINT_NUM_VIS_TOKENS = False
 SKIP_REPEAT = True
@@ -17,8 +18,8 @@ MODEL_PATH = 'deepseek-ai/DeepSeek-OCR-2' # change to your model path
 
 
 
-INPUT_PATH = '/your/image/path/'
-OUTPUT_PATH = '/your/output/path/'
+INPUT_PATH = '/root/dpsk-ocr2/data/input_batch'
+OUTPUT_PATH = '/root/dpsk-ocr2/data/output/'
 
 PROMPT = '<image>\n<|grounding|>Convert the document to markdown.'
 # PROMPT = '<image>\nFree OCR.'
