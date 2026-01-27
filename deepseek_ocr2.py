@@ -279,6 +279,9 @@ class DeepseekOCR2ForCausalLM(nn.Module, SupportsMultiModal, SupportsPP):
         self.config = config
         self.multimodal_config = multimodal_config
 
+        # fix for vllm 0.6.3+
+        config.text_config.model_type = 'deepseek_v2'
+
 
         self.vision_config = config.vision_config
         self.projector_config = config.projector_config
