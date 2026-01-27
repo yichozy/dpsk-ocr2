@@ -19,8 +19,39 @@ if [[ "$OS" == "Darwin" ]]; then
     echo "Note: vllm and flash-attn on MacOS are experimental or require source build. Skipping pre-built wheel installation."
     
 elif [[ "$OS" == "Linux" ]]; then
+    # Check for Debian/Ubuntu and install system deps if running as root or via sudo check
+    if [ -f /etc/debian_version ]; then
+        echo "Debian/Ubuntu detected. Installing system dependencies..."
+        if [ "$EUID" -ne 0 ]; then 
+             SUDO="sudo"
+        else
+             SUDO=""
+        fi
+        
+        $SUDO apt-get update && $SUDO apt-get install -y \
+            wget \
+            git \
+            libgl1 \
+            libglib2.0-0 \
+            libsm6 \
+            libxext6 \
+            libxrender-dev \
+            python3 \
+            python3-pip \
+            python3-venv \
+            python3-dev \
+            && $SUDO rm -rf /var/lib/apt/lists/*
+    fi
+
+    # Create virtual environment if VIRTUAL_ENV is set and doesn't exist
+    if [[ -n "$VIRTUAL_ENV" && ! -d "$VIRTUAL_ENV" ]]; then
+        echo "Creating virtual environment at $VIRTUAL_ENV..."
+        python3 -m venv "$VIRTUAL_ENV"
+        export PATH="$VIRTUAL_ENV/bin:$PATH"
+    fi
+
     # Linux
-    if command -v nvidia-smi &> /dev/null; then
+    if [[ "$FORCE_CUDA" == "1" ]] || command -v nvidia-smi &> /dev/null; then
         echo "NVIDIA GPU detected. Installing PyTorch with CUDA 11.8 support..."
         pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu118
         
