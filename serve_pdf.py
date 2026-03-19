@@ -4,6 +4,9 @@ import uuid
 import shutil
 import torch
 import hashlib
+import signal
+import sys
+import logging
 from pathlib import Path
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -34,6 +37,14 @@ from database import (
     get_completed_task_by_hash
 )
 from task_queue import get_queue, shutdown_queue
+from memory_monitor import init_monitor, stop_monitor, MemoryStats
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Environment setup
 if torch.version.cuda == '11.8':
@@ -41,7 +52,10 @@ if torch.version.cuda == '11.8':
 os.environ['VLLM_USE_V1'] = '0'
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
-from config import MODEL_PATH, PROMPT, SKIP_REPEAT, MAX_CONCURRENCY, NUM_WORKERS, CROP_MODE
+from config import (
+    MODEL_PATH, PROMPT, SKIP_REPEAT, MAX_CONCURRENCY, NUM_WORKERS, CROP_MODE, PDF_BATCH_SIZE,
+    MEMORY_WARNING_THRESHOLD, MEMORY_CRITICAL_THRESHOLD, MEMORY_CHECK_INTERVAL
+)
 
 from deepseek_ocr2 import DeepseekOCR2ForCausalLM
 from vllm.model_executor.models.registry import ModelRegistry
@@ -61,20 +75,82 @@ app = FastAPI(
 
 # Initialize task queue (global instance)
 task_queue = None
+_shutdown_requested = False
+
+
+def handle_oom_critical(stats: MemoryStats):
+    """
+    Handler for critical OOM situations.
+    Initiates graceful shutdown to prevent crashes.
+    """
+    global _shutdown_requested
+
+    if _shutdown_requested:
+        return  # Already handling shutdown
+
+    _shutdown_requested = True
+    logger.critical(
+        f"CRITICAL OOM DETECTED: {stats.percent_used:.1f}% memory used. "
+        f"Initiating graceful shutdown..."
+    )
+
+    # Give some time for current requests to complete
+    import threading
+    def delayed_shutdown():
+        logger.warning("Service will restart in 10 seconds due to OOM...")
+        threading.Event().wait(10)
+        logger.critical("Initiating restart due to OOM")
+        # Exit with code that will trigger a container restart
+        sys.exit(137)  # 137 = 128 + 9 (SIGKILL), typical Docker OOM exit code
+
+    shutdown_thread = threading.Thread(target=delayed_shutdown, daemon=True)
+    shutdown_thread.start()
+
+
+def setup_signal_handlers():
+    """Setup signal handlers for graceful shutdown."""
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+        global _shutdown_requested
+        _shutdown_requested = True
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
 
 # Initialize database and queue on startup
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database and task queue on application startup"""
+    """Initialize database, task queue, and memory monitor on startup"""
     global task_queue
+
+    setup_signal_handlers()
+
     init_database()
     # Initialize queue with 1 worker for sequential processing
     task_queue = get_queue(max_workers=1)
 
+    # Initialize memory monitor with OOM handler
+    try:
+        init_monitor(
+            warning_threshold=MEMORY_WARNING_THRESHOLD,
+            critical_threshold=MEMORY_CRITICAL_THRESHOLD,
+            check_interval=MEMORY_CHECK_INTERVAL,
+            on_critical=handle_oom_critical
+        )
+        logger.info("Memory monitor initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize memory monitor: {e}")
+
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on application shutdown"""
+    logger.info("Shutting down service...")
     shutdown_queue()
+    stop_monitor()
+    logger.info("Shutdown complete")
 
 # Security setup
 security = HTTPBearer()
@@ -190,6 +266,8 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
     """
     Internal function to process PDF
 
+    Processes PDF pages in batches to limit memory usage and avoid system memory leaks.
+
     Args:
         pdf_path: Path to input PDF file
         job_id: Unique job identifier
@@ -209,64 +287,78 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
         # Update total pages
         update_task_status(job_id, "processing", total_pages=len(images))
 
-        # Preprocess images in parallel
-        prompt = PROMPT
-        with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
-            batch_inputs = list(executor.map(
-                lambda img: process_single_image(img, prompt),
-                images
-            ))
-
-        # Run OCR inference
-        outputs_list = llm.generate(batch_inputs, sampling_params=sampling_params)
-
-        # Process outputs
+        # Initialize output accumulators
         contents_det = ''
         contents = ''
         draw_images = []
 
-        for jdx, (output, img) in enumerate(zip(outputs_list, images)):
-            content = output.outputs[0].text
+        # Process in batches to limit memory usage
+        # Use configured batch size (adjust in config.py based on available system memory)
+        prompt = PROMPT
 
-            # Check for proper completion
-            if '<｜end▁of▁sentence｜>' in content:
-                content = content.replace('<｜end▁of▁sentence｜>', '')
-            else:
-                if SKIP_REPEAT:
-                    continue
+        for batch_start in range(0, len(images), PDF_BATCH_SIZE):
+            batch_end = min(batch_start + PDF_BATCH_SIZE, len(images))
+            batch_images = images[batch_start:batch_end]
 
-            page_num = f'\n<--- Page Split --->'
-            contents_det += content + f'\n{page_num}\n'
+            # Preprocess this batch in parallel
+            with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
+                batch_inputs = list(executor.map(
+                    lambda img: process_single_image(img, prompt),
+                    batch_images
+                ))
 
-            # Extract layout references
-            matches_ref, matches_images, mathes_other = re_match(content)
+            # Run OCR inference on this batch
+            outputs_list = llm.generate(batch_inputs, sampling_params=sampling_params)
 
-            # Draw bounding boxes and extract images
-            image_draw = img.copy()
-            result_image = process_image_with_refs(
-                image_draw,
-                matches_ref,
-                jdx,
-                str(output_dir)
-            )
-            draw_images.append(result_image)
+            # Process outputs for this batch
+            for batch_idx, (output, img) in enumerate(zip(outputs_list, batch_images)):
+                jdx = batch_start + batch_idx
+                content = output.outputs[0].text
 
-            # Replace image references with markdown links
-            for idx, a_match_image in enumerate(matches_images):
-                content = content.replace(
-                    a_match_image,
-                    f'![](images/{jdx}_{idx}.jpg)\n'
+                # Check for proper completion
+                if '<｜end▁of▁sentence｜>' in content:
+                    content = content.replace('<｜end▁of▁sentence｜>', '')
+                else:
+                    if SKIP_REPEAT:
+                        continue
+
+                page_num = f'\n<--- Page Split --->'
+                contents_det += content + f'\n{page_num}\n'
+
+                # Extract layout references
+                matches_ref, matches_images, mathes_other = re_match(content)
+
+                # Draw bounding boxes and extract images
+                image_draw = img.copy()
+                result_image = process_image_with_refs(
+                    image_draw,
+                    matches_ref,
+                    jdx,
+                    str(output_dir)
                 )
+                draw_images.append(result_image)
 
-            # Clean up other references
-            for idx, a_match_other in enumerate(mathes_other):
-                content = content.replace(a_match_other, '') \
-                    .replace('\\coloneqq', ':=') \
-                    .replace('\\eqqcolon', '=:') \
-                    .replace('\n\n\n\n', '\n\n') \
-                    .replace('\n\n\n', '\n\n')
+                # Replace image references with markdown links
+                for idx, a_match_image in enumerate(matches_images):
+                    content = content.replace(
+                        a_match_image,
+                        f'![](images/{jdx}_{idx}.jpg)\n'
+                    )
 
-            contents += content + f'\n{page_num}\n'
+                # Clean up other references
+                for idx, a_match_other in enumerate(mathes_other):
+                    content = content.replace(a_match_other, '') \
+                        .replace('\\coloneqq', ':=') \
+                        .replace('\\eqqcolon', '=:') \
+                        .replace('\n\n\n\n', '\n\n') \
+                        .replace('\n\n\n', '\n\n')
+
+                contents += content + f'\n{page_num}\n'
+
+            # Explicitly clean up batch tensors to free system memory
+            del batch_inputs, outputs_list
+            import gc
+            gc.collect()
 
         # Save outputs
         mmd_det_path = output_dir / "output_det.mmd"
@@ -314,8 +406,71 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "model_loaded": True}
+    """
+    Health check endpoint with detailed memory statistics.
+
+    Returns:
+        Health status including:
+        - status: overall health status
+        - model_loaded: whether the model is loaded
+        - memory: detailed memory statistics
+        - alerts: any active memory alerts
+    """
+    from memory_monitor import get_monitor
+
+    health_data = {
+        "status": "healthy",
+        "model_loaded": True,
+        "memory": {},
+        "alerts": []
+    }
+
+    # Get memory statistics if monitor is running
+    monitor = get_monitor()
+    if monitor:
+        try:
+            stats = monitor.get_memory_stats()
+            health_data["memory"] = {
+                "system": {
+                    "total_mb": round(stats.total_mb, 2),
+                    "used_mb": round(stats.used_mb, 2),
+                    "available_mb": round(stats.available_mb, 2),
+                    "percent_used": round(stats.percent_used, 2)
+                }
+            }
+
+            # Add GPU memory if available
+            if stats.gpu_total_mb is not None:
+                health_data["memory"]["gpu"] = {
+                    "total_mb": round(stats.gpu_total_mb, 2),
+                    "used_mb": round(stats.gpu_used_mb, 2),
+                    "free_mb": round(stats.gpu_free_mb, 2)
+                }
+
+            # Check for alerts
+            if stats.percent_used >= 90:
+                health_data["status"] = "critical"
+                health_data["alerts"].append("CRITICAL: System memory usage above 90%")
+            elif stats.percent_used >= 80:
+                health_data["status"] = "warning"
+                health_data["alerts"].append("WARNING: System memory usage above 80%")
+
+        except Exception as e:
+            health_data["status"] = "degraded"
+            health_data["alerts"].append(f"Memory monitoring error: {str(e)}")
+    else:
+        health_data["alerts"].append("Memory monitor not available")
+
+    # Add queue status
+    if task_queue:
+        queue_size = task_queue.get_queue_size()
+        all_tasks = task_queue.get_all_tasks()
+        health_data["queue"] = {
+            "size": queue_size,
+            "active_tasks": len(all_tasks)
+        }
+
+    return health_data
 
 
 @app.get("/queue/status")

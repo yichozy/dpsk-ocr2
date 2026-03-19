@@ -1,0 +1,35 @@
+[Unit]
+Description=DeepSeek OCR PDF Service with Watchdog
+After=network.target
+
+[Service]
+Type=simple
+User=ocr-service
+Group=ocr-service
+WorkingDirectory=/opt/deepseek-ocr
+Environment="PATH=/opt/deepseek-ocr/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="CUDA_VISIBLE_DEVICES=0"
+
+# Run with watchdog for automatic restart on OOM
+ExecStart=/opt/deepseek-ocr/venv/bin/python watchdog_restart.py --max-restarts -1 --restart-delay 10
+
+# Auto-restart if watchdog itself crashes
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deepseek-ocr
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Resource limits (adjust based on your system)
+# These trigger SIGTERM before OOM, allowing graceful shutdown
+MemoryMax=32G
+MemoryHigh=28G
+
+[Install]
+WantedBy=multi-user.target
