@@ -6,6 +6,7 @@ import torch
 import hashlib
 import signal
 import sys
+import tempfile
 import logging
 from pathlib import Path
 from typing import Optional
@@ -40,8 +41,11 @@ from task_queue import get_queue, shutdown_queue
 from memory_monitor import init_monitor, stop_monitor, MemoryStats
 
 # Setup logging
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+numeric_level = getattr(logging, log_level, logging.INFO)
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=numeric_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -128,8 +132,9 @@ async def startup_event():
     setup_signal_handlers()
 
     init_database()
-    # Initialize queue with 1 worker for sequential processing
-    task_queue = get_queue(max_workers=1)
+    # Initialize queue with configurable number of workers (default 1 for sequential processing)
+    max_workers = int(os.getenv("MAX_WORKERS", 1))
+    task_queue = get_queue(max_workers=max_workers)
 
     # Initialize memory monitor with OOM handler
     try:
@@ -203,7 +208,7 @@ sampling_params = SamplingParams(
 )
 
 # Create directories for temporary files
-TEMP_DIR = Path("tmp/pdf_ocr")
+TEMP_DIR = Path(tempfile.gettempdir()) / "pdf_ocr"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -260,6 +265,7 @@ def process_pdf_background(pdf_path: str, job_id: str, output_dir: Path):
     except Exception as e:
         # Ensure status is updated even if something goes wrong
         update_task_status(job_id, "failed", error_message=str(e))
+        logger.error(f"Task {job_id} background wrapper failed: {str(e)}")
 
 
 def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
@@ -276,6 +282,7 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
     try:
         # Update status to processing
         update_task_status(job_id, "processing")
+        logger.info(f"Task {job_id} started processing...")
 
         # Create output directories
         images_dir = output_dir / "images"
@@ -375,6 +382,7 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
 
         # Update status to completed
         update_task_status(job_id, "completed", processed_pages=len(images))
+        logger.info(f"Task {job_id} successfully completed. Processed {len(images)} pages.")
 
         return {
             "success": True,
@@ -387,6 +395,7 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
     except Exception as e:
         # Update status to failed
         update_task_status(job_id, "failed", error_message=str(e))
+        logger.error(f"Task {job_id} failed: {str(e)}")
 
         return {
             "success": False,
@@ -557,6 +566,7 @@ async def process_pdf(
 
     # Get current queue size
     queue_size = task_queue.get_queue_size()
+    logger.info(f"Task {job_id} added to queue. Current queue size: {queue_size}")
 
     # Return immediately with pending status
     return ProcessingStatus(
