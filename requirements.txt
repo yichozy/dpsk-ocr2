@@ -12,3 +12,4 @@ uvicorn
 python-dotenv
 pydantic
 psutil
+matplotlib
