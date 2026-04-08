@@ -6,6 +6,7 @@ import torch
 import hashlib
 import signal
 import sys
+import tempfile
 import logging
 from pathlib import Path
 from typing import Optional
@@ -203,7 +204,7 @@ sampling_params = SamplingParams(
 )
 
 # Create directories for temporary files
-TEMP_DIR = Path("tmp/pdf_ocr")
+TEMP_DIR = Path(tempfile.gettempdir()) / "pdf_ocr"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
