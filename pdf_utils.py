@@ -34,3 +34,40 @@ def pdf_to_images_high_quality(pdf_path, dpi=144, image_format="PNG"):
     
     pdf_document.close()
     return images
+
+def get_pdf_page_count(pdf_path):
+    pdf_document = fitz.open(pdf_path)
+    count = pdf_document.page_count
+    pdf_document.close()
+    return count
+
+def get_pdf_page_batch(pdf_path, start_page, end_page, dpi=144, image_format="PNG"):
+    images = []
+    pdf_document = fitz.open(pdf_path)
+    zoom = dpi / 72.0
+    matrix = fitz.Matrix(zoom, zoom)
+    
+    # Ensure end_page does not exceed total pages
+    end_page = min(end_page, pdf_document.page_count)
+    
+    for page_num in range(start_page, end_page):
+        page = pdf_document[page_num]
+
+        pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+        Image.MAX_IMAGE_PIXELS = None
+
+        if image_format.upper() == "PNG":
+            img_data = pixmap.tobytes("png")
+            img = Image.open(io.BytesIO(img_data))
+        else:
+            img_data = pixmap.tobytes("png")
+            img = Image.open(io.BytesIO(img_data))
+            if img.mode in ('RGBA', 'LA'):
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                img = background
+        
+        images.append(img)
+    
+    pdf_document.close()
+    return images

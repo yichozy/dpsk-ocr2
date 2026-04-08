@@ -29,6 +29,16 @@ def pil_to_pdf_img2pdf(pil_images, output_path):
     except Exception as e:
         print(f"error: {e}")
 
+def paths_to_pdf_img2pdf(image_paths, output_path):
+    if not image_paths:
+        return
+    try:
+        pdf_bytes = img2pdf.convert(image_paths)
+        with open(output_path, "wb") as f:
+            f.write(pdf_bytes)
+    except Exception as e:
+        print(f"error: {e}")
+
 def re_match(text):
     pattern = r'(<\|ref\|>(.*?)<\|/ref\|><\|det\|>(.*?)<\|/det\|>)'
     matches = re.findall(pattern, text, re.DOTALL)
