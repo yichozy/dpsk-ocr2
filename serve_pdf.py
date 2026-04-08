@@ -181,7 +181,7 @@ llm = LLM(
     block_size=256,
     enforce_eager=False,
     trust_remote_code=True,
-    max_model_len=8192,
+    max_model_len=16384,
     swap_space=0,
     max_num_seqs=MAX_CONCURRENCY,
     tensor_parallel_size=1,
@@ -200,7 +200,7 @@ logits_processors = [
 
 sampling_params = SamplingParams(
     temperature=0.0,
-    max_tokens=8192,
+    max_tokens=15000,
     logits_processors=logits_processors,
     skip_special_tokens=False,
     include_stop_str_in_output=True,
