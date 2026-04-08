@@ -35,7 +35,6 @@ fastapi-cli==0.0.24
 fastapi-cloud-cli==0.16.0
 fastar==0.10.0
 filelock==3.25.2
-flash-attn==2.7.3
 fonttools==4.62.1
 frozenlist==1.8.0
 fsspec==2026.3.0
