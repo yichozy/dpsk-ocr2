@@ -1,4 +1,13 @@
 import os
+
+# Prevent thread thrashing when using multiprocessing/threading with PyTorch and numpy
+# os.environ["OMP_NUM_THREADS"] = "1"
+# os.environ["OPENBLAS_NUM_THREADS"] = "1"
+# os.environ["MKL_NUM_THREADS"] = "1"
+# os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+# os.environ["NUMEXPR_NUM_THREADS"] = "1"
+# os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file (if present)
@@ -11,9 +20,10 @@ MIN_CROPS = int(os.getenv('MIN_CROPS', '2'))
 MAX_CROPS = int(os.getenv('MAX_CROPS', '6')) # max:6
 MAX_CONCURRENCY = int(os.getenv('MAX_CONCURRENCY', '100')) # If you have limited GPU memory, lower the concurrency count.
 NUM_WORKERS = int(os.getenv('NUM_WORKERS', '64')) # image pre-process (resize/padding) workers
-PDF_BATCH_SIZE = int(os.getenv('PDF_BATCH_SIZE', '10'))  # Process PDF pages in batches to limit system memory usage. Lower if you have limited RAM.
-MAX_PDF_WORKERS = int(os.getenv('MAX_PDF_WORKERS', '2')) # Number of separate PDFs to process concurrently.
-MAX_PAGES = int(os.getenv('MAX_PAGES', '50')) # Maximum number of pages per PDF (0 means unlimited)
+PDF_BATCH_SIZE = int(os.getenv('PDF_BATCH_SIZE', '12'))  # Process PDF pages in batches. Lower batch size allows interleaving concurrent PDF tasks!
+MAX_PDF_WORKERS = int(os.getenv('MAX_PDF_WORKERS', '8')) # Number of separate PDFs to process concurrently.
+MAX_PAGES = int(os.getenv('MAX_PAGES', '0')) # Maximum number of pages per PDF (0 means unlimited)
+ENABLE_CACHE = os.getenv('ENABLE_CACHE', 'False').lower() in ('true', '1', 't') # Disable PDF hash caching by default
 
 # Memory monitoring thresholds (percentage of total system memory)
 MEMORY_WARNING_THRESHOLD = float(os.getenv('MEMORY_WARNING_THRESHOLD', '80.0'))   # Log warning when memory usage exceeds this

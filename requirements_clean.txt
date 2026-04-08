@@ -1,0 +1,21 @@
+# Core API and Web
+fastapi==0.135.3
+uvicorn==0.44.0
+python-multipart==0.0.24
+
+# Configuration and Environment
+python-dotenv==1.2.2
+psutil==7.2.2
+
+# PDF and Image Processing
+PyMuPDF==1.27.2.2
+img2pdf==0.6.3
+pillow==12.2.0
+
+# Deep Learning and OCR (CUDA 11.8 compatible)
+torch==2.6.0+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+torchvision==0.21.0+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+transformers==4.46.3
+
+# VLLM Engine (Compiled specifically for V0.8.5 with CUDA 11.8)
+vllm @ https://github.com/vllm-project/vllm/releases/download/v0.8.5/vllm-0.8.5+cu118-cp38-abi3-manylinux1_x86_64.whl

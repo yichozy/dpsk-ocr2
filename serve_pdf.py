@@ -7,7 +7,9 @@ import hashlib
 import signal
 import sys
 import tempfile
+import tempfile
 import logging
+import threading
 from pathlib import Path
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -56,7 +58,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 from config import (
     MODEL_PATH, PROMPT, SKIP_REPEAT, MAX_CONCURRENCY, NUM_WORKERS, CROP_MODE, PDF_BATCH_SIZE,
-    MEMORY_WARNING_THRESHOLD, MEMORY_CRITICAL_THRESHOLD, MEMORY_CHECK_INTERVAL, MAX_PDF_WORKERS
+    MEMORY_WARNING_THRESHOLD, MEMORY_CRITICAL_THRESHOLD, MEMORY_CHECK_INTERVAL, MAX_PDF_WORKERS, ENABLE_CACHE
 )
 
 from deepseek_ocr2 import DeepseekOCR2ForCausalLM
@@ -204,6 +206,9 @@ sampling_params = SamplingParams(
     include_stop_str_in_output=True,
 )
 
+# Global lock to prevent concurrent VLLM offline inference crashes
+llm_lock = threading.Lock()
+
 # Create directories for temporary files
 TEMP_DIR = Path(tempfile.gettempdir()) / "pdf_ocr"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -309,8 +314,9 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
                     batch_images
                 ))
 
-            # Run OCR inference on this batch
-            outputs_list = llm.generate(batch_inputs, sampling_params=sampling_params)
+            # Run OCR inference on this batch (vllm offline LLM is not thread-safe)
+            with llm_lock:
+                outputs_list = llm.generate(batch_inputs, sampling_params=sampling_params)
 
             # Process outputs for this batch
             for batch_idx, (output, img) in enumerate(zip(outputs_list, batch_images)):
@@ -538,17 +544,18 @@ async def process_pdf(
     # Generate hash for the file content
     file_hash = hashlib.sha256(contents).hexdigest()
 
-    # Check for existing completed task with same hash
-    existing_task = get_completed_task_by_hash(file_hash)
-    if existing_task:
-        # Check if the result file actually exists
-        existing_mmd_path = TEMP_DIR / existing_task['job_id'] / "output.mmd"
-        if existing_mmd_path.exists():
-            return ProcessingStatus(
-                job_id=existing_task['job_id'],
-                status="completed",
-                message="Retrieved from cache (file already processed)"
-            )
+    # Check for existing completed task if caching is enabled
+    if ENABLE_CACHE:
+        existing_task = get_completed_task_by_hash(file_hash)
+        if existing_task:
+            # Check if the result file actually exists
+            existing_mmd_path = TEMP_DIR / existing_task['job_id'] / "output.mmd"
+            if existing_mmd_path.exists():
+                return ProcessingStatus(
+                    job_id=existing_task['job_id'],
+                    status="completed",
+                    message="Retrieved from cache (file already processed)"
+                )
 
     # Generate unique job ID for new task
     job_id = str(uuid.uuid4())
