@@ -38,12 +38,3 @@ COPY requirements.txt install.sh ./
 # Make install script executable and run it
 # This script installs PyTorch, vLLM, and other requirements
 RUN chmod +x install.sh && ./install.sh
-
-# Copy the rest of the application code
-COPY . .
-
-# Expose the API port
-EXPOSE 8000
-
-# Default command to run the FastAPI server
-CMD ["python3", "serve_pdf.py"]

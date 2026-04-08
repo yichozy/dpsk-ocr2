@@ -1,0 +1,15 @@
+# Use the base image that contains all dependencies
+# Build the base image first with: docker build -t dpsk-ocr2-base -f Dockerfile.base .
+ARG BASE_IMAGE=dpsk-ocr2-base:latest
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+# Copy the rest of the application code
+COPY . .
+
+# Expose the API port
+EXPOSE 8000
+
+# Default command to run the FastAPI server
+CMD ["python3", "serve_pdf.py"]

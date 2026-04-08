@@ -1,8 +1,8 @@
-name: Docker Build and Push
+name: Docker Build and Push Base
 
 on:
   push:
-    tags: ["v*.*.*"]
+    tags: ["base-*"]
 
 env:
   # Use docker.io for Docker Hub if empty
@@ -53,20 +53,19 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=semver,pattern={{version}}
-            type=sha
+            type=raw,value=base-latest
+            type=ref,event=tag
 
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v5
         with:
           context: .
-          # Ensure the downloaded file is included in the context
+          file: ./Dockerfile.base
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=base
+          cache-to: type=gha,mode=max,scope=base
           # Important: we found this platform works best
           platforms: linux/amd64
