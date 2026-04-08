@@ -14,7 +14,9 @@ os.environ['VLLM_USE_V1'] = '0'
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
-from config import MODEL_PATH, INPUT_PATH, OUTPUT_PATH, PROMPT, SKIP_REPEAT, MAX_CONCURRENCY, NUM_WORKERS, CROP_MODE
+from config import MODEL_PATH, INPUT_PATH, OUTPUT_PATH, PROMPT, SKIP_REPEAT, MAX_CONCURRENCY, NUM_WORKERS, CROP_MODE, PDF_BATCH_SIZE
+from pdf_utils import get_pdf_page_count, get_pdf_page_batch
+from processing_utils import paths_to_pdf_img2pdf
 
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
@@ -237,87 +239,76 @@ if __name__ == "__main__":
     
     print(f'{Colors.RED}PDF loading .....{Colors.RESET}')
 
-
-    images = pdf_to_images_high_quality(INPUT_PATH)
-
+    total_pages = get_pdf_page_count(INPUT_PATH)
 
     prompt = PROMPT
 
-    # batch_inputs = []
-
-    with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:  
-        batch_inputs = list(tqdm(
-            executor.map(process_single_image, images),
-            total=len(images),
-            desc="Pre-processed images"
-        ))
-
-
-    # for image in tqdm(images):
-
-    #     prompt_in = prompt
-    #     cache_list = [
-    #         {
-    #             "prompt": prompt_in,
-    #             "multi_modal_data": {"image": DeepseekOCR2Processor().tokenize_with_images(images = [image], bos=True, eos=True, cropping=CROP_MODE)},
-    #         }
-    #     ]
-    #     batch_inputs.extend(cache_list)
-
-
-    outputs_list = llm.generate(
-        batch_inputs,
-        sampling_params=sampling_params
-    )
-
-
     output_path = OUTPUT_PATH
-
     os.makedirs(output_path, exist_ok=True)
-
 
     mmd_det_path = output_path + '/' + INPUT_PATH.split('/')[-1].replace('.pdf', '_det.mmd')
     mmd_path = output_path + '/' + INPUT_PATH.split('/')[-1].replace('pdf', 'mmd')
     pdf_out_path = output_path + '/' + INPUT_PATH.split('/')[-1].replace('.pdf', '_layouts.pdf')
     contents_det = ''
     contents = ''
-    draw_images = []
-    jdx = 0
-    for output, img in zip(outputs_list, images):
-        content = output.outputs[0].text
+    draw_image_paths = []
 
-        if '<｜end▁of▁sentence｜>' in content: # repeat no eos
-            content = content.replace('<｜end▁of▁sentence｜>', '')
-        else:
-            if SKIP_REPEAT:
-                continue
+    for batch_start in range(0, total_pages, PDF_BATCH_SIZE):
+        batch_end = min(batch_start + PDF_BATCH_SIZE, total_pages)
+        batch_images = get_pdf_page_batch(INPUT_PATH, batch_start, batch_end)
 
-        
-        page_num = f'\n<--- Page Split --->'
+        with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:  
+            batch_inputs = list(tqdm(
+                executor.map(process_single_image, batch_images),
+                total=len(batch_images),
+                desc=f"Pre-processed batch {batch_start}-{batch_end}"
+            ))
 
-        contents_det += content + f'\n{page_num}\n'
+        outputs_list = llm.generate(
+            batch_inputs,
+            sampling_params=sampling_params
+        )
 
-        image_draw = img.copy()
+        for batch_idx, (output, img) in enumerate(zip(outputs_list, batch_images)):
+            jdx = batch_start + batch_idx
+            content = output.outputs[0].text
 
-        matches_ref, matches_images, mathes_other = re_match(content)
-        # print(matches_ref)
-        result_image = process_image_with_refs(image_draw, matches_ref, jdx)
+            if '<｜end▁of▁sentence｜>' in content: # repeat no eos
+                content = content.replace('<｜end▁of▁sentence｜>', '')
+            else:
+                if SKIP_REPEAT:
+                    continue
+            
+            page_num = f'\n<--- Page Split --->'
+            contents_det += content + f'\n{page_num}\n'
 
+            image_draw = img.copy()
 
-        draw_images.append(result_image)
+            matches_ref, matches_images, mathes_other = re_match(content)
+            result_image = process_image_with_refs(image_draw, matches_ref, jdx)
 
+            drawn_img_path = f"{OUTPUT_PATH}/drawn_{jdx}.jpg"
+            if result_image.mode != 'RGB':
+                result_image = result_image.convert('RGB')
+            result_image.save(drawn_img_path, format="JPEG", quality=95)
+            draw_image_paths.append(drawn_img_path)
 
-        for idx, a_match_image in enumerate(matches_images):
-            content = content.replace(a_match_image, f'![](images/' + str(jdx) + '_' + str(idx) + '.jpg)\n')
+            for idx, a_match_image in enumerate(matches_images):
+                content = content.replace(a_match_image, f'![](images/' + str(jdx) + '_' + str(idx) + '.jpg)\n')
 
-        for idx, a_match_other in enumerate(mathes_other):
-            content = content.replace(a_match_other, '').replace('\\coloneqq', ':=').replace('\\eqqcolon', '=:').replace('\n\n\n\n', '\n\n').replace('\n\n\n', '\n\n')
+            for idx, a_match_other in enumerate(mathes_other):
+                content = content.replace(a_match_other, '').replace('\\coloneqq', ':=').replace('\\eqqcolon', '=:').replace('\n\n\n\n', '\n\n').replace('\n\n\n', '\n\n')
 
+            contents += content + f'\n{page_num}\n'
 
-        contents += content + f'\n{page_num}\n'
+            # cleanup
+            del result_image
+            del image_draw
 
-
-        jdx += 1
+        # Explicitly clean up batch tensors to free system memory
+        del batch_inputs, outputs_list, batch_images
+        import gc
+        gc.collect()
 
     with open(mmd_det_path, 'w', encoding='utf-8') as afile:
         afile.write(contents_det)
@@ -325,6 +316,10 @@ if __name__ == "__main__":
     with open(mmd_path, 'w', encoding='utf-8') as afile:
         afile.write(contents)
 
-
-    pil_to_pdf_img2pdf(draw_images, pdf_out_path)
-
+    paths_to_pdf_img2pdf(draw_image_paths, pdf_out_path)
+    
+    for p in draw_image_paths:
+        try:
+            os.remove(p)
+        except:
+            pass

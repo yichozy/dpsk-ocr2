@@ -21,9 +21,10 @@ from pydantic import BaseModel
 # Load environment variables from .env file
 load_dotenv()
 
-from pdf_utils import pdf_to_images_high_quality
+from pdf_utils import pdf_to_images_high_quality, get_pdf_page_count, get_pdf_page_batch
 from processing_utils import (
     pil_to_pdf_img2pdf,
+    paths_to_pdf_img2pdf,
     re_match,
     process_image_with_refs
 )
@@ -283,23 +284,23 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
         images_dir.mkdir(exist_ok=True)
 
         # Convert PDF to images
-        images = pdf_to_images_high_quality(pdf_path)
+        total_pages = get_pdf_page_count(pdf_path)
 
         # Update total pages
-        update_task_status(job_id, "processing", total_pages=len(images))
+        update_task_status(job_id, "processing", total_pages=total_pages)
 
         # Initialize output accumulators
         contents_det = ''
         contents = ''
-        draw_images = []
+        draw_image_paths = []
 
         # Process in batches to limit memory usage
         # Use configured batch size (adjust in config.py based on available system memory)
         prompt = PROMPT
 
-        for batch_start in range(0, len(images), PDF_BATCH_SIZE):
-            batch_end = min(batch_start + PDF_BATCH_SIZE, len(images))
-            batch_images = images[batch_start:batch_end]
+        for batch_start in range(0, total_pages, PDF_BATCH_SIZE):
+            batch_end = min(batch_start + PDF_BATCH_SIZE, total_pages)
+            batch_images = get_pdf_page_batch(pdf_path, batch_start, batch_end)
 
             # Preprocess this batch in parallel
             with ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
@@ -337,7 +338,16 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
                     jdx,
                     str(output_dir)
                 )
-                draw_images.append(result_image)
+                
+                drawn_img_path = str(output_dir / f"drawn_{jdx}.jpg")
+                if result_image.mode != 'RGB':
+                    result_image = result_image.convert('RGB')
+                result_image.save(drawn_img_path, format="JPEG", quality=95)
+                draw_image_paths.append(drawn_img_path)
+
+                # clean up references
+                del result_image
+                del image_draw
 
                 # Replace image references with markdown links
                 for idx, a_match_image in enumerate(matches_images):
@@ -357,7 +367,7 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
                 contents += content + f'\n{page_num}\n'
 
             # Explicitly clean up batch tensors to free system memory
-            del batch_inputs, outputs_list
+            del batch_inputs, outputs_list, batch_images
             import gc
             gc.collect()
 
@@ -372,10 +382,17 @@ def process_pdf_internal(pdf_path: str, job_id: str, output_dir: Path):
         with open(mmd_path, 'w', encoding='utf-8') as f:
             f.write(contents)
 
-        pil_to_pdf_img2pdf(draw_images, str(pdf_out_path))
+        paths_to_pdf_img2pdf(draw_image_paths, str(pdf_out_path))
+
+        for p in draw_image_paths:
+            try:
+                import os
+                os.remove(p)
+            except:
+                pass
 
         # Update status to completed
-        update_task_status(job_id, "completed", processed_pages=len(images))
+        update_task_status(job_id, "completed", processed_pages=total_pages)
 
         return {
             "success": True,
