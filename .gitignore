@@ -144,3 +144,4 @@ dmypy.json
 miniconda3
 .agent
 data
+*.db
