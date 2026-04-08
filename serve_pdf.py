@@ -54,7 +54,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 from config import (
     MODEL_PATH, PROMPT, SKIP_REPEAT, MAX_CONCURRENCY, NUM_WORKERS, CROP_MODE, PDF_BATCH_SIZE,
-    MEMORY_WARNING_THRESHOLD, MEMORY_CRITICAL_THRESHOLD, MEMORY_CHECK_INTERVAL
+    MEMORY_WARNING_THRESHOLD, MEMORY_CRITICAL_THRESHOLD, MEMORY_CHECK_INTERVAL, MAX_PDF_WORKERS
 )
 
 from deepseek_ocr2 import DeepseekOCR2ForCausalLM
@@ -128,8 +128,8 @@ async def startup_event():
     setup_signal_handlers()
 
     init_database()
-    # Initialize queue with 1 worker for sequential processing
-    task_queue = get_queue(max_workers=1)
+    # Initialize queue for checking number of max workers
+    task_queue = get_queue(max_workers=MAX_PDF_WORKERS)
 
     # Initialize memory monitor with OOM handler
     try:
